@@ -1,0 +1,861 @@
+---
+title: "Performance Comparison of Machine Learning Algorithms to Predict Chronic Kidney Disease"
+subtitle: DA5030 
+author: "Remala,Subbaramireddy"
+date: "`r Sys.Date()`, Fall 2024"
+output:
+  pdf_document:
+    toc: yes
+  html_document:
+    toc: yes
+bibliography: references.bib
+---
+
+## Introduction
+
+The project aims to leverage advanced Machine Learning techniques to predict the onset of CKD. Given the subtle progression of CKD, early detection is crucial for effective intervention and prevention of kidney failure. This project will compare various machine learning algorithms to assess their accuracy and efficiency in predicting CKD based on available clinical data, including lab tests, medical history, and demographic factors. By analyzing the performance of these algorithms, the project seeks to identify the most effective model for early diagnosis, helping clinicians make timely decisions in patient care.
+
+
+## Purpose of Analysis
+
+Purpose of this analysis is to evaluate and compare the performance of various machine learning algorithms in predicting the onset of Chronic Kidney Disease (CKD) using clinical data such as laboratory test results, medical history, and demographic factors. By identifying the most accurate and efficient model for early CKD detection, the project aims to facilitate timely interventions and improve patient outcomes, thereby reducing the risk of kidney failure and its associated complications.
+
+## Dataset Overview
+
+The dataset is designed for the prediction of Chronic Kidney Disease (CKD) and consists of 400 instances with 24 features plus a target variable (class), which indicates whether a patient has CKD or not. The features are a mix of 11 numeric and 14 nominal variables, encompassing demographic information, clinical test results, and medical history. These include attributes such as age, blood pressure, blood glucose, serum creatinine, hemoglobin, and binary indicators for conditions like hypertension, diabetes, and anemia. Additionally, features such as specific gravity, albumin, pus cell clumps, and bacteria are categorical or binary in nature. The dataset contains missing values, making data preprocessing essential. The target variable (class) is binary, representing CKD (ckd) or not CKD (notckd), and the data supports classification tasks, aiming to leverage clinical insights for early CKD detection and improved patient care[@rubini2015chronic].
+
+
+## Dataset Source
+
+The source of this dataset is available from the UCI Machine Learning Repository. It was contributed by Rubini K. and can be accessed via the following link: UCI Machine Learning Repository - Chronic Kidney Disease Dataset- https://archive.ics.uci.edu/dataset/336/chronic+kidney+disease .
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# 1. Date Preprocessing and Exploration
+
+```{r  echo=FALSE, warning=FALSE, message=FALSE}
+# required package installations 
+#install.packages("httr", repos = "https://cloud.r-project.org/")
+#install.packages("farff", repos = "https://cloud.r-project.org/")
+#install.packages("ggcorrplot", repos = "https://cloud.r-project.org/")
+#install.packages("caret", repos = "https://cloud.r-project.org/")
+#install.packages("e1071", repos = "https://cloud.r-project.org/")
+#install.packages("pROC",repos = "https://cloud.r-project.org/")
+#install.packages("glmnet", repos = "https://cloud.r-project.org/")
+#install.packages("nnet", repos = "https://cloud.r-project.org/")
+#install.packages("gridExtra", repos = "https://cloud.r-project.org/")
+#install.packages("FactoMineR", repos = "https://cloud.r-project.org/")
+#install.packages("vcd", repos = "https://cloud.r-project.org/")
+#install.packages("factoextra",repos = "https://cloud.r-project.org/")
+```
+
+```{r message=FALSE}
+# loading required libraries 
+library(httr)
+library(farff)
+library(ggcorrplot)
+library(caret)
+library(e1071)
+library(pROC)
+library(glmnet)
+library(nnet)
+library(gridExtra)
+library(FactoMineR)
+library(vcd)
+library(factoextra)
+```
+
+## 1.1 Data Acquisition
+
+```{r message=FALSE, warning=FALSE}
+
+# Define the Google Drive URL
+url <- "https://drive.google.com/uc?export=download&id=15K4XjrVVsEoD4HMEvFz3vYQN2EMpXr_R"
+
+# Send a request to the Google Drive URL
+response <- GET(url)
+
+# Saving the downloaded content to a temporary file
+temp_file <- tempfile(fileext = ".arff")
+writeBin(content(response, "raw"), temp_file)
+
+# Read the ARFF file from the temporary location
+ckd_data <- readARFF(temp_file)
+
+# Reneaming the columns of the dataset for clarity
+names(ckd_data) = c("age", "blood_pressure", "specific_gravity", "albumin", "sugar", "rbc",
+                    "pus_cell", "pus_cell_clumps", "Bacteria", "blood_glucose_random", "blood_urea",
+                    "serum_creatinine", "sodium", "potassium", "hemoglobin", "packed_cell_volume", 
+                    "wbc_count", "rbc_count", "hypertension", "diabetes_mellitus",
+                    "cad", "appetite", "peda_edema", "anemia", "class")
+
+# first few rows of the dataset
+head(ckd_data)
+# summary of the dataset
+summary(ckd_data)
+# checking the structure
+str(ckd_data)
+```
+
+## 1.2 Data Cleaning, and Immputation
+
+```{r}
+# counting the number of missing (NA) values in each column of the dataset
+colSums(is.na(ckd_data))
+```
+
+### Handling missing values for numeric variables and all Binary class null values
+```{r}
+# # Convert selected columns to numeric type (specific_gravity, albumin, sugar)
+ckd_data[c("specific_gravity", "albumin", "sugar")] <- lapply(ckd_data[c("specific_gravity", "albumin", "sugar")], as.numeric)
+
+# defining a vector of numeric variables that may have missing values
+numeric_vars <- c("age", "blood_pressure","specific_gravity", "albumin", "sugar", "blood_glucose_random", "blood_urea",
+                  "serum_creatinine","sodium","potassium", "hemoglobin", "packed_cell_volume", "wbc_count", "rbc_count")
+
+# looping through each numeric variable and fill missing values with the median
+for (var in numeric_vars) {
+  ckd_data[[var]][is.na(ckd_data[[var]])] <- median(ckd_data[[var]], na.rm = TRUE)
+}
+# counting the number of missing values (NA) in each column after filling
+colSums(is.na(ckd_data))
+```
+### Handling missing values for categorical variables except class variable
+```{r}
+# # function to calculate the mode of a variable
+get_mode <- function(x) {
+  uniq_x <- unique(x)
+  uniq_x[which.max(tabulate(match(x, uniq_x)))]
+}
+
+# Define the numeric variables
+numeric_vars <- c("rbc", "pus_cell", "pus_cell_clumps", "Bacteria", "hypertension", "diabetes_mellitus", 
+                  "cad", "appetite", "peda_edema", "anemia")
+
+# defining the categorical variables that need mode imputation
+for (var in numeric_vars) {
+  mode_value <- get_mode(ckd_data[[var]][!is.na(ckd_data[[var]])])  # Exclude NAs when calculating mode
+  ckd_data[[var]][is.na(ckd_data[[var]])] <- mode_value
+}
+
+# counting the number of missing values (NA) in each column after imputation
+colSums(is.na(ckd_data))
+
+```
+
+```{r}
+# Remove rows with any missing (NA) values from the dataset, i.e only class variable is left
+ckd_data <- na.omit(ckd_data)
+
+# Count the number of missing values (NA) in each column after removing rows with NAs for class variable 
+colSums(is.na(ckd_data))
+
+```
+
+## 1.3 Exploratory Data Plots
+```{r}
+# Histograms of Numerical Variables
+plot_age <- ggplot(ckd_data, aes(x = age)) +
+  geom_histogram(binwidth = 5, fill = "blue", alpha = 0.7) +
+  labs(title = "Dist of age", x = "age", y = "Frequency")
+
+plot_bp <- ggplot(ckd_data, aes(x = blood_pressure)) +
+  geom_histogram(binwidth = 5, fill = "yellow", alpha = 0.7) +
+  labs(title = "Dist of blood_pressure", x = "blood_pressure", y = "Frequency")
+
+plot_sg <- ggplot(ckd_data, aes(x = specific_gravity)) +
+  geom_histogram(binwidth = 5, fill = "green", alpha = 0.7) +
+  labs(title = "Dist of specific_gravity", x = "specific_gravity", y = "Frequency")
+
+plot_alb <- ggplot(ckd_data, aes(x = albumin)) +
+  geom_histogram(binwidth = 5, fill = "purple", alpha = 0.7) +
+  labs(title = "Dist of albumin", x = "albumin", y = "Frequency")
+
+plot_sug <- ggplot(ckd_data, aes(x = sugar)) +
+  geom_histogram(binwidth = 5, fill = "orange", alpha = 0.7) +
+  labs(title = "Dist of sugar", x = "sugar", y = "Frequency")
+
+plot_bgr <- ggplot(ckd_data, aes(x = blood_glucose_random)) +
+  geom_histogram(binwidth = 5, fill = "violet", alpha = 0.7) +
+  labs(title = "Dist of blood_glucose_random", x = "blood_glucose_random", y = "Frequency")
+
+# Use grid.arrange to arrange the plots
+grid.arrange(plot_age, plot_bp, plot_sg, 
+             plot_alb, plot_sug, plot_bgr, 
+             ncol = 3,
+             top = "Histograms of Numerical Variables")
+```
+The above histograms shows the distributions of numerical variables in a ckd dataset.
+
+1. **Age**: The distribution is roughly bell-shaped, with a peak around 25-40 years, indicating a concentration of individuals in that age range. There are also a few individuals in the older age group, extending up to 75 years.
+
+2. **Blood Pressure**: This distribution is skewed towards the lower range, with the majority of the values between 50 and 80, and a smaller frequency of values above 80. There are few extreme values, indicating the presence of outliers or possible measurement anomalies.
+
+3. **Specific Gravity**: Histogram shows a highly concentrated distribution, with most values near 1.0. There are very few data points that deviate from this range, suggesting a narrow distribution.
+
+4. **Albumin**: The distribution for albumin shows a sharp peak at low values, indicating most values are clustered around zero, with very few observations extending into positive values.
+
+5. **Sugar**: The distribution is heavily skewed towards low values, with almost all data points concentrated at 0. This suggests that the majority of the individuals have very low or no sugar present in their data, with a few higher values.
+
+6. **Blood Glucose Random **: This histogram is skewed towards higher values, with a notable peak around 100-200. There are several high-frequency occurrences at lower values and a tail extending towards larger values, indicating some possible outliers or variance.
+
+Overall, the dataset exhibits significant skewness in most of the variables, with certain variables showing concentrations around specific ranges while others exhibit outliers.
+
+
+
+```{r}
+# Histograms of Numerical Variables
+plot_bu <- ggplot(ckd_data, aes(x = blood_urea)) +
+  geom_histogram(binwidth = 5, fill = "blue", alpha = 0.7) +
+  labs(title = "Dist of blood_urea", x = "blood_urea", y = "Frequency")
+
+plot_sc <- ggplot(ckd_data, aes(x = serum_creatinine)) +
+  geom_histogram(binwidth = 5, fill = "green", alpha = 0.7) +
+  labs(title = "Dist of serum_creatinine", x = "serum_creatinine", y = "Frequency")
+
+plot_sod <- ggplot(ckd_data, aes(x = sodium)) +
+  geom_histogram(binwidth = 5, fill = "red", alpha = 0.7) +
+  labs(title = "Dist of sodium", x = "sodium", y = "Frequency")
+
+plot_pot <- ggplot(ckd_data, aes(x = potassium)) +
+  geom_histogram(binwidth = 5, fill = "yellow", alpha = 0.7) +
+  labs(title = "Dist of potassium", x = "potassium", y = "Frequency")
+
+plot_hemo <- ggplot(ckd_data, aes(x = hemoglobin)) +
+  geom_histogram(binwidth = 5, fill = "orange", alpha = 0.7) +
+  labs(title = "Dist of hemoglobin", x = "hemoglobin", y = "Frequency")
+
+plot_pcv <- ggplot(ckd_data, aes(x = packed_cell_volume)) +
+  geom_histogram(binwidth = 5, fill = "violet", alpha = 0.7) +
+  labs(title = "Dist of packed_cell_volume", x = "packed_cell_volume", y = "Frequency")
+
+plot_rc <- ggplot(ckd_data, aes(x = rbc_count)) +
+  geom_histogram(binwidth = 5, fill = "skyblue", alpha = 0.7) +
+  labs(title = "Dist of rbc_count", x = "rbc_count", y = "Frequency")
+
+# Use grid.arrange to arrange the plots
+grid.arrange(plot_bu, plot_sc, plot_sod,
+             plot_pot, plot_hemo, plot_pcv,
+             plot_rc,
+             ncol = 3,
+             top = "Histograms of Numerical Variables")
+```
+The second set of histograms provides insights into the distribution of several additional numerical variables.
+
+1. **Blood Urea**: The distribution shows a right-skewed pattern with a peak at lower values, particularly around 10-50. There are some data points extending into the higher range, suggesting a few individuals with elevated blood urea levels.
+
+2. **Serum Creatinine**: The histogram is skewed to the left, with most values concentrated in the lower range (around 0-5), indicating that most individuals have low serum creatinine levels. There are some higher values but they are less frequent.
+
+3. **Sodium**: The distribution is somewhat bimodal, with two peaks: one around 130-140 and another around 140-150. This suggests that sodium levels are distributed in two distinct ranges, with most values concentrated in the 130-140 range.
+
+4. **Potassium**: The distribution is slightly skewed to the right, with most values around 4-5, and a few extending towards the higher end (up to around 10). This indicates a concentration of individuals with potassium levels in the lower range.
+
+5. **Hemoglobin**: The distribution is roughly normal, with a slight peak around 12-14. This suggests that most individuals in the dataset have hemoglobin levels within this range.
+
+6. **Packed Cell Volume**: The distribution shows a slight skew to the right, with most values concentrated around 30-40, extending up to 50. There is a concentration of individuals with packed cell volumes near 35, which indicates some variation in this measure.
+
+7. **RBC Count**: The distribution for red blood cell count is very concentrated around lower values, with a sharp peak near 4-5. This suggests that the majority of the dataset has relatively low red blood cell counts.
+
+In summary, the histograms indicate that most variables exhibit either a right or left skew, with some of them showing concentration around specific ranges. There are also a few variables, like hemoglobin, with a more uniform distribution.
+
+```{r}
+# Histogram for categorical variables
+plot_rbc <- ggplot(ckd_data, aes(x = rbc)) +
+  geom_bar(fill = "green", alpha = 0.7) +
+  labs(title = "Dist of RBC", x = "RBC", y = "Count")
+
+plot_pc <- ggplot(ckd_data, aes(x = pus_cell)) +
+  geom_bar(fill = "red", alpha = 0.7) +
+  labs(title = "Dist of Pus Cells (PC)", x = "PC", y = "Count")
+
+plot_pcc <- ggplot(ckd_data, aes(x = pus_cell_clumps)) +
+  geom_bar(fill = "purple", alpha = 0.7) +
+  labs(title = "Dist of Pus Cell Clumps (PCC)", x = "PCC", y = "Count")
+
+plot_ba <- ggplot(ckd_data, aes(x = Bacteria)) +
+  geom_bar(fill = "cyan", alpha = 0.7) +
+  labs(title = "Dist of Bacteria (BA)", x = "BA", y = "Count")
+
+plot_htn <- ggplot(ckd_data, aes(x = hypertension)) +
+  geom_bar(fill = "pink", alpha = 0.7) +
+  labs(title = "Dist of Hypertension (HTN)", x = "HTN", y = "Count")
+
+plot_dm <- ggplot(ckd_data, aes(x = diabetes_mellitus)) +
+  geom_bar(fill = "orange", alpha = 0.7) +
+  labs(title = "Distribution of Diabetes Mellitus (DM)", x = "DM", y = "Count")
+
+plot_cad <- ggplot(ckd_data, aes(x = cad)) +
+  geom_bar(fill = "yellow", alpha = 0.7) +
+  labs(title = "Dist of Coronary Artery Disease (CAD)", x = "CAD", y = "Count")
+
+plot_appet <- ggplot(ckd_data, aes(x = appetite)) +
+  geom_bar(fill = "blue", alpha = 0.7) +
+  labs(title = "Dist of Appetite (Appet)", x = "Appetite", y = "Count")
+
+plot_pe <- ggplot(ckd_data, aes(x = peda_edema)) +
+  geom_bar(fill = "violet", alpha = 0.7) +
+  labs(title = "Dist of Pedal Edema (PE)", x = "PE", y = "Count")
+
+plot_ane <- ggplot(ckd_data, aes(x = anemia)) +
+  geom_bar(fill = "green", alpha = 0.7) +
+  labs(title = "Dist of Anemia (Ane)", x = "Ane", y = "Count")
+
+plot_class <- ggplot(ckd_data, aes(x = class)) +
+  geom_bar(fill = "brown", alpha = 0.7) +
+  labs(title = "Dist of Class", x = "Class", y = "Count")
+
+# Arranging plots in a grid
+grid.arrange(plot_rbc, plot_pc, plot_pcc, plot_ba, plot_htn, plot_dm, 
+             plot_cad, plot_appet, plot_pe, plot_ane, plot_class, ncol = 3,
+             top = "Histograms of Categorical Variables")
+```
+
+The third set of histograms represents the distributions of various categorical variables in the ckd data.
+
+1. **RBC (Red Blood Cells)**: The distribution is fairly balanced between the two categories: *normal* and *abnormal*, with a slightly higher frequency of *normal* RBC counts. This suggests that the majority of individuals have normal red blood cell counts.
+
+2. **Pus Cells (PC)**: The distribution shows that most individuals have *normal* pus cell counts, with a smaller proportion labeled as *abnormal*. This implies that abnormal pus cell counts are less common in the dataset.
+
+3. **Pus Cell Clumps (PCC)**: The data is more evenly split between the two categories: *present* and *not present*. This indicates that pus cell clumps are present in a significant portion of the dataset.
+
+4. **Bacteria (BA)**: The majority of individuals fall under the *present* category for bacteria, suggesting that the presence of bacteria is common in this dataset.
+
+5. **Hypertension (HTN)**: The *yes* category (indicating the presence of hypertension) has a slight dominance over the *no* category. This suggests a relatively higher incidence of hypertension in the dataset.
+
+6. **Diabetes (DM)**: The distribution indicates that more individuals in the dataset have diabetes (*yes*), compared to those who do not have diabetes (*no*), with a noticeable skew towards the *yes* category.
+
+7. **Coronary Artery (CAD)**: There are more individuals in the *no* category, meaning that most individuals in the dataset do not have coronary artery disease. However, the *yes* category (indicating the presence of CAD) still has a significant representation.
+
+8. **Appetite (Appet)**: The distribution is mostly skewed towards *good* appetite, with a smaller number of individuals categorized as *poor* appetite. This suggests that the dataset has a larger portion of individuals with good appetite.
+
+9. **Pedal Edema (PE)**: There is a larger proportion of individuals who do not have pedal edema (*not present*), with a smaller portion showing *present* pedal edema.
+
+10. **Anemia (Ane)**: A significant number of individuals have *no* anemia, with fewer individuals classified as having *anemia*.
+
+11. **Class**: The distribution shows that more individuals in the dataset are classified as *not ckd* (not chronic kidney disease), with fewer individuals in the *ckd* category. This indicates that chronic kidney disease is less prevalent in the dataset.
+
+In summary, the categorical variables mostly show imbalanced distributions, with some categories like *normal* RBC, *present* pus cells, and *good* appetite having a higher frequency. On the other hand, variables like *anemia* and *pedal edema* show more people categorized as *not present* or *no*.
+
+```{r}
+# Define the numerical columns (excluding class for now)
+numerical_cols <- c("age", "blood_pressure", "specific_gravity", "albumin", 
+                    "sugar", "blood_glucose_random", "blood_urea", "serum_creatinine", 
+                    "sodium", "potassium", "hemoglobin", "packed_cell_volume", 
+                    "wbc_count", "rbc_count")
+
+# Calculate the correlation matrix
+corr_matrix <- cor(ckd_data[numerical_cols], use = "complete.obs")
+
+# Visualize the correlation matrix using ggcorrplot
+library(ggcorrplot)  # Ensure you have the ggcorrplot package loaded
+ggcorrplot(corr_matrix, 
+           hc.order = TRUE, 
+           type = "lower",   
+           lab = TRUE,       
+           lab_size = 3) +   
+  ggtitle("Correlation Heatmap")
+
+```
+
+The image shows a correlation heatmap, which is a visual representation of the correlation between different variables. Each square in the heatmap represents the correlation coefficient between two variables, with the color indicating the strength and direction of the correlation.The heatmap displays the correlation between various features related to blood tests and medical measurements, such as age, serum creatinine, blood urea, potassium, blood glucose, albumin, hemoglobin, and specific gravity.The color scale ranges from blue (negative correlation) to red (positive correlation), with the darker shades indicating stronger correlations. For example, the correlation between blood urea and serum creatinine is strongly positive, as indicated by the dark red square.
+
+
+# 2. Perprocessing for Classification
+
+## 2.1 Identifying outliers and Scaling
+
+```{r}
+# Function to detect outliers using Z-scores and return count
+detect_outliers_zscore_count <- function(data) {
+  z_scores <- (data - mean(data, na.rm = TRUE)) / sd(data, na.rm = TRUE)
+  outliers <- sum(abs(z_scores) > 3)
+  return(outliers)
+}
+
+# Apply outlier detection and count for each numerical column
+outlier_counts <- sapply(ckd_data[numerical_cols], detect_outliers_zscore_count)
+
+# Convert to data frame for easier presentation
+outlier_counts_table <- data.frame(
+  Feature = names(outlier_counts),
+  Outlier_Count = outlier_counts
+)
+
+# Display the table
+print(outlier_counts_table)
+```
+
+### Standardizing using scale function
+```{r}
+# Standardizing the numerical columns
+ckd_data[numerical_cols] <- scale(ckd_data[numerical_cols])
+
+# displaying the first few rows of the dataset after scaling
+head(ckd_data)
+
+```
+
+## 2.2 PCA and Feature engnerring 
+
+```{r}
+# # Apply label encoding to categorical variables (factors or characters)
+predictors_transformed <- as.data.frame(sapply(ckd_data, function(x) {
+  if (is.factor(x) || is.character(x)) {
+    # Create dummy columns for categorical variables 
+    label_encoding <- 1 - model.matrix(~ x - 1)[, -1, drop = FALSE]
+    label_encoding 
+  } else {
+    x  # if variable is numeric, retain original values
+  }
+}))
+
+# Display the first few rows of the transformed dataset
+head(predictors_transformed)
+
+# Convert binary numeric columns (0/1) back to factors
+predictors_transformed[] <- lapply(predictors_transformed, function(x) if(is.numeric(x) && all(x %in% c(0, 1))) factor(x) else x)
+
+head(predictors_transformed)
+
+```
+
+
+
+```{r}
+# excluding the target variable 'class' from predictors and store the target variable separately
+predictors <- predictors_transformed[, -which(names(predictors_transformed) == "class")]  # Exclude target variable
+target <- as.factor(ckd_data$class)
+
+# performing factorial Analysis of Mixed Data (FAMD) analysis (FAMD) on the predictor variables
+ckd_pca <- FAMD(predictors, graph = F)
+
+# extracting and display the eigenvalues from the FAMD results
+eig.val <- get_eigenvalue(ckd_pca)
+```
+
+**Factorial Analysis of Mixed Data (FAMD)** is a dimensionality reduction technique used, beacuse this ckd dataset containing both continuous and categorical variables. It combines Principal Component Analysis (PCA) for continuous data and Multiple Correspondence Analysis (MCA) for categorical data, allowing for the identification of latent factors that explain the most variance in the data. FAMD helps in feature selection by highlighting which variables contribute most to the principal components, enabling the reduction of dimensionality while retaining key information. This approach simplifies mixed datasets like in this case ckd_data, making them more suitable for further analysis and modeling.
+
+```{r}
+# Visualize the features based on their contribution to the dimensions of the FAMD
+fviz_famd_var(ckd_pca, repel = TRUE, col.var = "contrib", gradient.cols = c("blue", "orange", "red"))
+# Contribution to the first dimension
+fviz_contrib(ckd_pca, "var", axes = 1)
+# Contribution to the second dimension
+fviz_contrib(ckd_pca, "var", axes = 2)
+```
+
+This image shows a plot of the contributions of various variables to the Dim1 and Dim2 dimensions in a Factorial Analysis of Mixed Data (FAMD) analysis. FAMD is a multivariate statistical technique used to analyze datasets with both continuous and categorical variables.
+
+The horizontal axis represents the Dim1 dimension, which captures the primary source of variation in the data, while the vertical axis represents the Dim2 dimension, which captures a secondary source of variation.
+
+The variables are plotted based on their contributions to these two dimensions. Variables that are positioned further from the origin (the intersection of the x and y axes) have a greater influence on the overall data structure.
+
+Some key observations from the plot:
+
+1. Variables like "sugar", "blood_glucose_random", "serum_creatinine", and "blood_urea" have high contributions to the Dim1 dimension, indicating they are important in explaining the primary patterns in the data.
+
+2. Variables like "diabetes_mellitus", "anemia", and "hemoglobin" have higher contributions to the Dim2 dimension, suggesting they capture a secondary source of variation.
+
+3. Variables like "specific_gravity", "albumin", "rbc_count", and "packed_cell_volume" have moderate contributions to both Dim1 and Dim2, indicating they are relevant for understanding the overall data structure.
+
+Two bar plots that show the contribution of different variables to Dim-1 and Dim-2 in a Factorial Analysis of Mixed Data (FAMD) analysis. These plots help in understanding the contributions of each variable to Dim-1 and Dim-2 separately.
+
+## 2.3 Creation of Train and Test datasets
+
+```{r}
+
+set.seed(12346)
+
+# select only the required feature after feature engneering
+selected_columns <- c("age", "specific_gravity", "albumin", "sugar", "pus_cell", "blood_glucose_random", 
+                      "blood_urea", "serum_creatinine", "sodium", "hemoglobin", "packed_cell_volume", 
+                      "rbc_count", "hypertension", "diabetes_mellitus", "peda_edema", "anemia", "class")
+
+# subset the data with selected columns
+ckd_data <- predictors_transformed[, selected_columns]
+
+# Shuffle the dataset for randomness
+ckd_data <- ckd_data[sample(nrow(ckd_data)), ]
+
+# defining the split ratio (70% for training)
+train_split <- sample(seq_len(nrow(ckd_data)), size = floor(0.70 * nrow(ckd_data)))
+
+# identify the target column index
+target_col <- which(names(ckd_data) == "class")
+
+# Split the data into training and testing sets
+x_train <- ckd_data[train_split, -target_col, drop = FALSE]  # Exclude target column for features
+y_train <- ckd_data[train_split, target_col]  # Target column only
+x_test <- ckd_data[-train_split, -target_col, drop = FALSE]  # Exclude target column for features
+y_test <- ckd_data[-train_split, target_col]  # Target column only
+
+# ensuring x_train and x_test are entirely numeric
+x_train <- data.frame(lapply(x_train, function(col) {
+  if (is.factor(col) || is.character(col)) {
+    as.numeric(as.character(col))
+  } else {
+    col 
+  }
+}))
+x_test <- data.frame(lapply(x_test, function(col) {
+  if (is.factor(col) || is.character(col)) {
+    as.numeric(as.character(col))  
+  } else {
+    col  
+  }
+}))
+
+# ensure the target variables are numeric binary values
+y_train_binary <- as.numeric(as.factor(y_train)) - 1
+y_test_binary <- as.numeric(as.factor(y_test)) - 1
+
+# convert x_train and x_test to matrices
+x_train <- as.matrix(x_train)
+x_test <- as.matrix(x_test)
+
+# the dimensions of the splits
+cat("X_train dimensions:", dim(x_train), "\n")
+cat("Y_train length:", length(y_train_binary), "\n")
+cat("X_test dimensions:", dim(x_test), "\n")
+cat("Y_test length:", length(y_test_binary), "\n")
+```
+
+
+
+# 3. Contructing ML Classifiers
+
+## 3.1 Lasso Regression
+
+```{r}
+# Perform Lasso regression with alpha = 1 (Lasso) and 10-fold cross-validation
+lasso_model <- cv.glmnet(x_train, y_train_binary, alpha = 1, nfolds = 10)
+
+print(lasso_model)
+
+# Extract the lambda value that gives the minimum mean cross-validated error
+lambda.min = lasso_model$lambda.min
+
+# Extract and round the coefficients at the value of lambda that minimizes the cross-validation error
+glm_coef = round(coef(lasso_model, s= lambda.min),2)
+
+plot(lasso_model)
+```
+This graph shows the relationship between the log of the regularization parameter lambda (x-axis) and the mean-squared error (MSE) or mean-squared error (y-axis) for a Lasso regression model. The x-axis represents the log of the regularization parameter lambda. Lasso regression uses an L1 regularization penalty, controlled by lambda. As lambda increases, the model becomes more regularized and tends to have fewer non-zero coefficients.The y-axis represents the mean-squared error (MSE). This is a measure of the model's predictive performance, where lower values indicate better performance.The red dots represent the mean cross-validated error for each value of lambda tested. This shows how the model's performance varies as the regularization strength is changed. The vertical dashed lines indicate the values of lambda that result in the minimum mean cross-validated error (lambda.min) and the value one standard error above the minimum (lambda.1se). These two lambda values are commonly used to select the final Lasso model.
+
+The purpose of this plot is to help determine the optimal amount of regularization (i.e., the value of lambda) to use in the Lasso regression model. By looking at the plot, you can see that as lambda increases, the model becomes more regularized and the MSE decreases until it reaches a minimum, after which the MSE starts to increase again as the model becomes overly regularized. The value of lambda that minimizes the MSE is often chosen as the final Lasso model.
+
+```{r}
+
+# Plot the regularization path for Lasso, showing coefficients for each value of lambda
+plot(glmnet(x_train, y_train_binary, family="gaussian", alpha=1), "lambda", label=T, main="")
+
+# Add a vertical line at the value of log(lambda.min) on the plot
+abline(v=log(lambda.min), lty=3)
+```
+This graph shows the regularization path for a Lasso regression model. The Lasso model uses L1 regularization, which tends to shrink some coefficients to exactly zero as the regularization strength (lambda) increases.The x-axis represents the log of the regularization parameter lambda. As lambda increases, the model becomes more regularized and tends to have fewer non-zero coefficients.The y-axis represents the coefficient values for each feature in the model. The colored lines represent the coefficient paths for each feature as lambda changes. Features with lines that reach zero and stay there are effectively removed from the model at higher levels of regularization.The vertical dashed line represents the value of log(lambda.min), which is the value of lambda that minimizes the cross-validation error for the Lasso model. This is often used as the optimal value of lambda to choose the final Lasso model.
+
+The purpose of this plot is to visualize how the Lasso model performs feature selection by shrinking coefficient values to zero as the regularization strength increases. By identifying the features whose coefficients are reduced to zero at the optimal value of lambda, you can determine which features are most important for the model's predictive performance[@FriedmanTibshiraniHastie2010].
+
+```{r}
+# predict probabilities using the lasso model
+lasso_pred <- predict(lasso_model, x_test, type="response")
+
+# convert probabilities to binary class labels based on a threshold of 0.5
+lasso_pred_class <- ifelse(lasso_pred > 0.5, 1, 0)
+
+# confusion matrix using the binary class labels
+conf_matrix_lasso <- confusionMatrix(as.factor(lasso_pred_class), as.factor(y_test_binary))
+conf_matrix_lasso
+```
+
+```{r}
+overall_accuracy_lasso <- conf_matrix_lasso$overall['Accuracy'] # accuracy
+tpr_lasso <-conf_matrix_lasso$byClass['Sensitivity'] # TPR
+tnr_lasso <- conf_matrix_lasso$byClass['Specificity'] # TNR
+precision_lasso <- conf_matrix_lasso$byClass['Pos Pred Value'] ## precision
+kappa_lasso <- conf_matrix_lasso$overall['Kappa'] #kappa value
+
+
+overall_accuracy_lasso
+precision_lasso
+tpr_lasso
+tnr_lasso
+kappa_lasso
+
+```
+The Lasso regression model shows exceptional performance in classifying binary outcomes. With an accuracy of `r round(overall_accuracy_lasso * 100, 2)`%, the model correctly predicts the class labels in the majority of cases. The precision, or positive predictive value, stands at `r round(precision_lasso * 100, 2)`%, indicating that when the model predicts a positive outcome, it is correct most of the time. Sensitivity, or recall, is perfect at `r round(tpr_lasso * 100, 2)`%, meaning the model correctly identifies all positive cases with no false negatives. Specificity, at `r round(tnr_lasso * 100, 2)`% shows that the model is highly effective at identifying negative cases, minimizing false positives. Finally, the Kappa value of `r round(kappa_lasso, 2)` suggests nearly perfect agreement between the observed and expected accuracy, indicating that the model’s performance is much better than what would be expected by chance. Overall, these metrics demonstrate that the model performs very well in both identifying positive and negative cases, with minimal errors.
+
+## 3.2 Ridge Regression
+
+```{r}
+# firring the Ridge regression model (alpha = 0 for Ridge)
+ridge_model <- cv.glmnet(x_train, y_train_binary, alpha = 0, nfolds = 10)
+
+
+print(ridge_model)
+
+# lambda value that minimizes the cross-validation error
+lambda.min_ridge = ridge_model$lambda.min
+
+# getting the coefficients for the model at lambda.min
+ridge_coef = round(coef(ridge_model, s = lambda.min_ridge), 2)
+
+# Plot the cross-validation results for Ridge regression
+plot(ridge_model)
+```
+This graph shows the regularization path for a Ridge regression model. Ridge regression uses L2 regularization, which shrinks the coefficients towards zero but does not tend to set them exactly to zero like Lasso regression.The x-axis represents the log of the regularization parameter lambda. As lambda increases, the model becomes more regularized.The y-axis represents the coefficient values for each feature in the model.The horizontal lines represent the coefficient paths for each feature as lambda changes. The coefficients are shrunk towards zero as lambda increases, but do not typically reach exactly zero.The vertical dashed line represents the value of log(lambda.min), which is the value of lambda that minimizes the cross-validation error for the Ridge regression model. This is often used as the optimal value of lambda to choose the final Ridge model.
+
+The purpose of this plot is to visualize how the Ridge model handles feature selection by shrinking coefficient values towards zero as the regularization strength increases. Unlike Lasso, Ridge does not typically produce sparse models with many zero coefficients. Instead, it shrinks all coefficients towards zero, with the most important features having the largest non-zero coefficients at the optimal value of lambda.
+
+The vertical dashed line at log(lambda.min) helps identify the coefficients that are non-zero at the optimal level of regularization, which is useful for interpreting the final Ridge model[@FriedmanTibshiraniHastie2010].
+
+```{r}
+# Plot the Ridge path (the effect of lambda on the coefficients)
+plot(glmnet(x_train, y_train_binary, family = "gaussian", alpha = 0), "lambda", label = TRUE, main = "")
+
+```
+This graph shows the regularization path for a Ridge regression model. It displays how the coefficient values for each feature change as the regularization parameter lambda is adjusted. The x-axis represents the log of the regularization parameter lambda. As lambda increases, the model becomes more regularized. The y-axis represents the coefficient values for each feature in the model.Each colored line represents the coefficient path for a particular feature as lambda changes. The coefficients are shrunk towards zero as lambda increases, but they do not typically reach exactly zero.
+
+The purpose of this plot is to visualize how the Ridge regression model handles feature selection by shrinking coefficient values towards zero as the regularization strength increases. Unlike Lasso regression, Ridge does not produce sparse models with many zero coefficients. Instead, it shrinks all coefficients towards zero, with the most important features having the largest non-zero coefficients at the optimal value of lambda.
+
+The graph helps identify the features that have non-zero coefficients at the optimal level of regularization, which is useful for interpreting the final Ridge regression model.
+
+```{r}
+# predict probabilities using the glm model
+ridge_pred <- predict(ridge_model, x_test, type="response")
+
+# convert probabilities to binary class labels based on a threshold of 0.5
+ridge_pred_class <- ifelse(ridge_pred > 0.5, 1, 0)
+
+# generate confusion matrix using the binary class labels
+conf_matrix_ridge <- confusionMatrix(as.factor(ridge_pred_class), as.factor(y_test_binary))
+conf_matrix_ridge
+```
+```{r}
+overall_accuracy_ridge <- conf_matrix_ridge$overall['Accuracy'] # accuracy 
+tpr_ridge <-conf_matrix_ridge$byClass['Sensitivity'] # TPR
+tnr_ridge <- conf_matrix_ridge$byClass['Specificity'] # TNR
+precision_ridge <- conf_matrix_ridge$byClass['Pos Pred Value'] # precision
+kappa_ridge <- conf_matrix_ridge$overall['Kappa'] # Kappa value
+
+overall_accuracy_ridge
+precision_ridge
+tpr_ridge
+tnr_ridge
+kappa_ridge
+```
+
+For the Ridge regression model shows strong performance in classifying binary outcomes. With an accuracy of `r round(overall_accuracy_ridge * 100, 2)`%, the model correctly predicts the class labels in the majority of cases. The precision, or positive predictive value, stands at `r round(precision_ridge * 100, 2)`%, indicating that when the model predicts a positive outcome, it is correct most of the time. Sensitivity, or recall, is perfect at `r round(tpr_ridge * 100, 2)`%, meaning the model correctly identifies all positive cases without any false negatives. Specificity, at `r round(tnr_ridge * 100, 2)`%, shows that the model is highly effective at identifying negative cases, minimizing false positives. The Kappa value of `r round(kappa_ridge, 2)`suggests nearly perfect agreement between the observed and expected accuracy, indicating the model's performance is significantly better than random chance. Overall, the Ridge regression model demonstrates excellent performance across the board, with minimal errors in both positive and negative classifications.
+
+## 3.3 Artifical Neural Networks algorithm
+
+```{r}
+# train a neural network model on the training data using 5 hidden nodes (neurons)
+#'size' parameter controls the number of hidden units in the neural network
+nnet_model <- nnet(x_train, y_train_binary, size = 5)
+
+nnet_model
+```
+
+
+```{r}
+# predict probabilities using the glm model
+nnet_pred <- predict(nnet_model, x_test, type="raw")
+
+# convert probabilities to binary class labels based on a threshold of 0.5
+nnet_pred_class <- ifelse(nnet_pred > 0.5, 1, 0)
+
+# generate confusion matrix using the binary class labels
+conf_matrix_nnet <- confusionMatrix(as.factor(nnet_pred_class), as.factor(y_test_binary))
+conf_matrix_nnet
+```
+
+```{r}
+overall_accuracy_nnet <- conf_matrix_nnet$overall['Accuracy'] # accuracy
+tpr_nnet <-conf_matrix_nnet$byClass['Sensitivity'] # TPR
+tnr_nnet <- conf_matrix_nnet$byClass['Specificity'] # TNR
+
+precision_nnet <- conf_matrix_nnet$byClass['Pos Pred Value'] # precision
+kappa_nnet <- conf_matrix_nnet$overall['Kappa'] # kappa Value
+
+
+overall_accuracy_nnet
+precision_nnet
+tpr_nnet
+tnr_nnet
+kappa_nnet
+```
+The performance of the neural network model was evaluated using several metrics. The overall accuracy of the model was `r round(overall_accuracy_nnet * 100, 2)`% indicating a high level of correct predictions across all classes. The model's precision, or positive predictive value, was 95.24%, meaning that when the model predicted a positive class, `r round(precision_nnet * 100, 2)` of the time it was correct. The true positive rate (sensitivity) was `r round(tpr_nnet * 100, 2)`%, reflecting the model's ability to correctly identify 88.89% of the actual positive instances. The true negative rate (specificity) was `r round(tnr_nnet * 100, 2)`%, suggesting that the model accurately identified 97.30% of the actual negative instances. Additionally, the Kappa statistic was 0.87, which signifies strong agreement between the predicted and actual values after accounting for chance. Overall, these results suggest that the neural network model is performing well[@VenablesRipley2002].
+
+
+## 3.4 Support Vector Machine algorithm
+```{r warning=FALSE}
+# Train the SVM model with radial kernel and 10-fold cross-validation
+svm_model <- svm(x_train, y_train_binary, 
+                 kernel = "radial",          # Corrected spelling
+                 cross = 10)  # 10-fold cross-validation
+svm_model
+```
+
+```{r}
+# predict probabilities using the glm model
+svm_pred <- predict(svm_model, x_test, type="resposne")
+
+# convert probabilities to binary class labels based on a threshold of 0.5
+svm_pred_class <- ifelse(svm_pred > 0.5, 1, 0)
+
+# confusion matrix using the binary class labels
+conf_matrix_svm <- confusionMatrix(as.factor(svm_pred_class), as.factor(y_test_binary))
+conf_matrix_svm
+
+```
+
+```{r}
+overall_accuracy_svm <- conf_matrix_svm$overall['Accuracy'] # accuracy 
+tpr_svm <-conf_matrix_svm$byClass['Sensitivity'] # TPR
+tnr_svm <- conf_matrix_svm$byClass['Specificity'] # TNR
+precision_svm <- conf_matrix_svm$byClass['Pos Pred Value'] # precision
+kappa_svm <- conf_matrix_svm$overall['Kappa'] # kappa value
+overall_accuracy_svm
+precision_svm
+tpr_svm
+tnr_svm
+kappa_svm
+```
+The performance of the Support Vector Machine (SVM) model  was assessed using several key metrics. The overall accuracy of the model was `r round(overall_accuracy_svm * 100, 2)`%, indicating a very high level of correct predictions across all classes. The precision, or positive predictive value, was `r round(precision_svm * 100, 2)`%, meaning that when the model predicted a positive class, `r round(precision_svm * 100, 2)`% of the time the prediction was correct. The sensitivity (true positive rate) was `r round(tpr_svm * 100, 2)`%, which means the model correctly identified all of the actual positive instances. The specificity (true negative rate) was `r round(tnr_svm * 100, 2)`%, suggesting that `r round(tnr_svm * 100, 2)` of the actual negative instances were correctly classified. Finally, the Kappa statistic was `r round(kappa_svm, 2)`, demonstrating excellent agreement between the predicted and actual values, accounting for chance. Overall, these results indicate that the SVM model is performing exceptionally well with high accuracy, precision, and robust ability to identify both positive and negative instances correctly[@cortes1995support].
+
+## 3.5 Performance Comparision of individual models
+
+```{r echo=FALSE, message=FALSE}
+# collect the metrics for each model
+metrics <- data.frame(
+  Model = c("LASSO", "Ridge", "Neural Network", "SVM"),
+  Accuracy = c(overall_accuracy_lasso, overall_accuracy_ridge, overall_accuracy_nnet, overall_accuracy_svm),
+  Precision = c(precision_lasso, precision_ridge, precision_nnet, precision_svm),
+  Sensitivity = c(tpr_lasso, tpr_ridge, tpr_nnet, tpr_svm),
+  Specificity = c(tnr_lasso, tnr_ridge, tnr_nnet, tnr_svm),
+  Kappa = c(kappa_lasso, kappa_ridge, kappa_nnet, kappa_svm)
+)
+
+# Display the table using knitr::kable()
+knitr::kable(metrics, caption = "Model Performance Metrics", digits = 3)
+```
+
+The performance comparison of the four models—**LASSO**, **Ridge**, **Neural Network**, and **SVM**—reveals some interesting differences in their ability to make accurate and reliable predictions. **LASSO** and **Ridge** models perform similarly well, achieving high accuracy, sensitivity, and specificity. Both show perfect sensitivity (`r round(tpr_lasso * 100, 2)`%, `r round(tpr_ridge * 100, 2)`%), meaning they correctly identify all true positives, and high specificity (`r round(tnr_lasso * 100, 2)`%, `r round(tnr_ridge * 100, 2)`%), effectively distinguishing between positive and negative cases. However, their precision (`r round(precision_lasso * 100, 2)`%, `r round(precision_ridge * 100, 2)`%) is slightly lower than that of the **SVM** model. **SVM** stands out with the highest precision (`r round(precision_svm * 100, 2)`%) and Kappa value (`r round(kappa_svm, 2)`%), indicating its superior ability to make precise and consistent predictions. These metrics suggest that **SVM** is the most reliable in correctly classifying both positives and negatives with minimal error.
+
+On the other hand, the **Neural Network** model, while strong in specificity (`r round(tnr_nnet * 100, 2)`%), exhibits lower sensitivity (`r round(tpr_nnet * 100, 2)`%) compared to the other models, meaning it misses a higher number of true positives. It also has a lower Kappa value (`r round(kappa_nnet * 100, 2)`%), reflecting less agreement between the predicted and actual outcomes compared to **SVM**, **LASSO**, and **Ridge**. Despite these drawbacks, the **Neural Network** still demonstrates solid performance, particularly in distinguishing negative cases. Overall, **SVM** appears to be the most balanced and precise model, excelling in multiple metrics, while **LASSO** and **Ridge** follow closely behind in performance, and the **Neural Network** model could benefit from further optimization to enhance its sensitivity and consistency.
+
+# 4. Ensemble model contruction 
+
+## 4.1 Ensemble Function 
+
+```{r}
+predictDiseaseClass <- function(new_data, svm_model, nnet_model, ridge_model, lasso_model) {
+  
+  # Validate input data
+  if (missing(new_data) || !is.matrix(new_data)) {
+    stop("Please provide `x_test` as a valid matrix.")
+  }
+  
+  # SVM predictions (class labels)
+  svm_pred <- predict(svm_model, new_data, type = "response")
+  
+  # Neural network predictions (probabilities, then converted to class labels)
+  nnet_prob <- predict(nnet_model, new_data, type = "raw")
+  nnet_pred <- ifelse(nnet_prob > 0.5, "1", "0")
+  
+  # Ridge regression predictions (continuous response, then converted to class labels)
+  ridge_prob <- predict(ridge_model, new_data, type = "response")
+  ridge_pred <- ifelse(ridge_prob > 0.5, "1", "0")
+  
+  # Lasso regression predictions (continuous response, then converted to class labels)
+  lasso_prob <- predict(lasso_model, new_data, type = "response")
+  lasso_pred <- ifelse(lasso_prob > 0.5, "1", "0")
+  
+  # Combine predictions into a data frame
+  ensemble_predictions <- data.frame(
+    svm = svm_pred,
+    nnet = nnet_pred,
+    ridge = ridge_pred,
+    lasso = lasso_pred
+  )
+  
+  # Perform majority voting
+  final_predictions <- apply(ensemble_predictions, 1, function(row) {
+    class_counts <- table(row) # Count votes for each class
+    names(which.max(class_counts)) # Class with most votes
+  })
+  
+  # Return final predictions as a vector
+  return(final_predictions)
+}
+```
+
+## 4.2 Evalution of Ensemble Model 
+
+```{r}
+prediction_ensemble <- predictDiseaseClass(
+  new_data = x_test,
+  svm_model = svm_model,
+  nnet_model = nnet_model, 
+  ridge_model = ridge_model,
+  lasso_model = lasso_model
+)
+
+conf_matrix_ensemble <- confusionMatrix(factor(prediction_ensemble), factor(y_test_binary))
+overall_accuracy_en <- conf_matrix_ensemble$overall['Accuracy'] # accuracy
+precision_en <- conf_matrix_ensemble$byClass['Pos Pred Value'] # Precision for the positive class
+tpr_en <- conf_matrix_ensemble$byClass['Sensitivity'] # TPR (Recall)
+tnr_en <- conf_matrix_ensemble$byClass['Specificity'] # TNR
+kappa_en <- conf_matrix_ensemble$overall['Kappa'] # Kappa value
+
+conf_matrix_ensemble
+overall_accuracy_en
+precision_en
+tpr_en
+tnr_en
+kappa_en
+
+```
+
+The performance metrics for the **ensemble model** indicate that it performs exceptionally well across all aspects of classification. The **accuracy** of **`r round(overall_accuracy_en * 100, 2)`%** reflects a very high overall correctness, with the model correctly predicting nearly `r round(overall_accuracy_en * 100, 2)`% of all instances. This is a strong indication of the model’s ability to make reliable predictions. The **precision** (also known as **positive predictive value**) is **`r round(precision_en * 100, 2)`%**, which means that when the model predicts a positive class, it is correct about `r round(precision_en * 100, 2)`% of the time. This high precision indicates that the model minimizes false positives effectively.
+
+In terms of classification performance, the **sensitivity** (or **true positive rate**) is **`r round(tpr_en * 100, 2)`%**, indicating that the ensemble model correctly identifies every positive instance with no false negatives. This makes it perfect for detecting the positive class. The **specificity** (or **true negative rate**) is **`r round(tnr_en * 100, 2)`**, meaning that the model is highly effective in identifying true negatives, correctly classifying `r round(tnr_en * 100, 2)`% of the negative instances. Finally, the **Kappa** value is **0.98**, suggesting a very strong agreement between the predicted and actual outcomes, which is considerably high and reflects the model’s consistency. Overall, the ensemble model outperforms the individual models in terms of accuracy, precision, sensitivity, specificity, and Kappa, showcasing its robustness and reliability in making predictions.
+
+## 4.3 Performance Comparision of All of models against Ensemble
+
+```{r echo=FALSE, message=FALSE}
+# Collect the metrics for each model
+metrics <- data.frame(
+  Model = c("LASSO", "Ridge", "Neural Network", "SVM", "Ensemble"),
+  Accuracy = c(overall_accuracy_lasso, overall_accuracy_ridge, overall_accuracy_nnet, overall_accuracy_svm, overall_accuracy_en),
+  Precision = c(precision_lasso, precision_ridge, precision_nnet, precision_svm, precision_en),
+  Sensitivity = c(tpr_lasso, tpr_ridge, tpr_nnet, tpr_svm, tpr_en),
+  Specificity = c(tnr_lasso, tnr_ridge, tnr_nnet, tnr_svm, tnr_en),
+  Kappa = c(kappa_lasso, kappa_ridge, kappa_nnet, kappa_svm, kappa_en)
+)
+
+# Display the table using knitr::kable()
+knitr::kable(metrics, caption = "Model Performance Metrics", digits = 3)
+```
+
+When comparing the performance of the individual models—**LASSO**, **Ridge**, **Neural Network**, and **SVM**—against the **ensemble model**, it is clear that the ensemble model outperforms all the others in most metrics. The **ensemble model** achieves the highest **accuracy** of **`r round(overall_accuracy_en * 100, 2)`**, which surpasses the **SVM** (`r round(overall_accuracy_svm * 100, 2)`), **LASSO** and **Ridge** (both`r round(overall_accuracy_lasso * 100, 2)`%, `r round(overall_accuracy_ridge * 100, 2)`%), and **Neural Network** (`r round(overall_accuracy_nnet * 100, 2)`). This indicates that the ensemble model is more reliable overall in making correct predictions across the dataset. Additionally, the **ensemble model** has the highest **precision** at **`r round(precision_en * 100, 2)`**, meaning it is particularly strong in minimizing false positives when predicting the positive class, outperforming **SVM** (`r round(precision_svm * 100, 2)`), **Neural Network** (`r round(precision_nnet * 100, 2)`), and **LASSO/Ridge** (`r round(precision_lasso * 100, 2)`%, `r round(precision_ridge * 100, 2)`%).
+
+In terms of **sensitivity**, the ensemble model matches the **LASSO**, **Ridge**, and **SVM** models with a perfect **`r round(tpr_lasso * 100, 2)`%, `r round(tpr_ridge * 100, 2)`%, `r round(tpr_svm * 100, 2)`%**, indicating it correctly identifies all true positive instances, similar to these models. The **Neural Network**, however, has a lower sensitivity of **`r round(tpr_nnet * 100, 2)`%**, meaning it misses some true positives. The **ensemble model** also excels in **specificity**, with a score of **`r round(tpr_en * 100, 2)`%**, which is slightly higher than **SVM** (`r round(tpr_svm * 100, 2)`%) and better than **LASSO/Ridge** (`r round(tpr_lasso * 100, 2)`%, `r round(tpr_ridge * 100, 2)`%) and **Neural Network** (`r round(tpr_nnet * 100, 2)`%). Finally, the **ensemble model** shows the highest **Kappa** value of **`r round(kappa_en * 100, 2)`%**, suggesting that it has a strong agreement between predicted and actual outcomes, outperforming **SVM** (`r round(kappa_svm * 100, 2)`%) and **LASSO/Ridge** (`r round(kappa_lasso * 100, 2)`%, `r round(kappa_ridge * 100, 2)`%), with **Neural Network** trailing at **`r round(kappa_nnet * 100, 2)`%**. Overall, the ensemble model demonstrates superior performance, making it the most balanced and reliable model among all compared.
+
+# Challenges
+
+This project faces several challenges that need to be addressed to ensure accurate and reliable predictions of Chronic Kidney Disease (CKD). One significant challenge is dealing with missing values in the dataset, which can compromise the model's ability to learn effectively. Selecting appropriate imputation techniques. Another issue is the imbalance in the target class (`ckd` vs. `notckd`), which may lead to biased predictions favoring the majority class. The dataset also includes both numerical and categorical features, necessitating careful preprocessing steps like encoding categorical variables and scaling numerical features. Additionally, the dataset's small size (400 instances) may limit the generalizability of machine learning models, requiring strategies like cross-validation to maximize learning. Finally, evaluating the performance of various machine learning algorithms to identify the best-suited model for early detection presents a complex task, especially when balancing accuracy, efficiency, and interpretability.
+
+# Conclusion
+
+In conclusion, the ensemble model outperforms all individual models—LASSO, Ridge, Neural Network, and SVM—in most performance metrics, achieving the highest accuracy, precision, sensitivity, specificity, and Kappa value. While **SVM** excels in precision and consistency, demonstrating high reliability in predicting both positive and negative cases, the **ensemble model** surpasses it with a more balanced and superior performance across all metrics. The **LASSO** and **Ridge** models demonstrate similar strengths, particularly in sensitivity and specificity, while the **Neural Network** model, despite its solid performance in specificity, shows lower sensitivity and consistency. Overall, the ensemble model stands out as the most reliable and precise, making it the most effective choice for accurate predictions.
+
+
+# Reference
+
+
